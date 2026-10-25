@@ -24,3 +24,16 @@ jobs:
       - name: gofmt
         if: runner.os == 'Linux'
         run: test -z "$(gofmt -l .)"
+
+  install-script:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: shellcheck
+        if: runner.os == 'Linux'
+        run: shellcheck install.sh
+      - run: sh install.sh
+      - run: ~/.local/bin/yure --version

@@ -4,14 +4,7 @@
 
 *A terminal UI that shows earthquakes in Japan on a live map.*
 
-```
- ⡔⢫⢤⠺⣍⡱⡀⡇            薩摩半島西方沖
-⢸⠠⡃⢔X1⡧⢻            2026/10/24 21:08
- ⠈⢆⡱⠤⡡⣔⣱⠏
-                      最大震度   震度1
-                      規模      M3.6
-                      深さ      ごく浅い
-```
+![yure --demo の画面: 地震が届くたびに震源から波紋が広がる](docs/demo.gif)
 
 - 点字文字(Braille)で描いた日本地図に、震源と都道府県ごとの震度を表示
 - 新しい地震が届くと、震源から波紋が広がる
@@ -26,9 +19,17 @@
 
 ## インストール
 
-### ビルド済みのバイナリ
+macOS / Linux:
 
-[Releases](https://github.com/torihazi/yure/releases) から、OS に合ったファイルをダウンロードして展開してください。
+```sh
+curl -fsSL https://raw.githubusercontent.com/torihazi/yure/main/install.sh | sh
+```
+
+最新のリリースをダウンロードし、チェックサムを確かめてから `~/.local/bin/yure` に置きます。置き場所は `YURE_INSTALL_DIR` で変えられます。実行前に中身を確かめたい場合は [install.sh](install.sh) を読んでください。
+
+### 手動でダウンロード
+
+[Releases](https://github.com/torihazi/yure/releases) から、OS に合ったファイルをダウンロードして展開してください(Windows はこちら)。
 
 macOS では、ブラウザでダウンロードしたバイナリは署名がないため「開けません」と表示されます。次のコマンドで解除できます。
 
@@ -89,7 +90,7 @@ yure --version       # バージョンを表示する
 - 地震情報: [気象庁防災情報XML](https://xml.kishou.go.jp/)(出典:気象庁)。yure が電文を独自に解析・加工して表示しています。
 - 海岸線: [Natural Earth](https://www.naturalearthdata.com/)(パブリックドメイン)
 
-地図データは `tools/genmap` で生成しています。
+地図データは `tools/genmap` で生成しています。README の GIF は [VHS](https://github.com/charmbracelet/vhs) で `docs/demo.tape` から録画しています。
 
 ```sh
 curl -LO https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_land.geojson
