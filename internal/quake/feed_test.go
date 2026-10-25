@@ -45,10 +45,11 @@ func fakeJMA(t *testing.T) (*Source, *atomic.Int32) {
 	}))
 	t.Cleanup(srv.Close)
 	return &Source{
-		client:    srv.Client(),
-		recentURL: srv.URL + "/feed",
-		longURL:   srv.URL + "/feed",
-		cacheDir:  t.TempDir(),
+		client:     srv.Client(),
+		recentURL:  srv.URL + "/feed",
+		longURL:    srv.URL + "/feed",
+		dataPrefix: srv.URL + "/data/",
+		cacheDir:   t.TempDir(),
 	}, &reportRequests
 }
 
@@ -112,5 +113,35 @@ func TestWatchSendsNewReports(t *testing.T) {
 			t.Errorf("kinds = %v, want %v", kinds, want)
 			break
 		}
+	}
+}
+
+func TestValidLink(t *testing.T) {
+	s := &Source{dataPrefix: dataPrefix}
+	good := "https://www.data.jma.go.jp/developer/xml/data/20261025021715_0_VXSE53_010000.xml"
+	if !s.validLink(good) {
+		t.Errorf("%s should be valid", good)
+	}
+	for _, href := range []string{
+		"http://www.data.jma.go.jp/developer/xml/data/20261025021715_0_VXSE53_010000.xml", // not https
+		"https://evil.example/developer/xml/data/20261025021715_0_VXSE53_010000.xml",
+		"https://www.data.jma.go.jp/developer/xml/data/..\\..\\..\\x.xml", // escapes the cache dir on Windows
+		"https://www.data.jma.go.jp/developer/xml/data/sub/20261025021715_0_VXSE53_010000.xml",
+		"https://www.data.jma.go.jp/developer/xml/data/20261025021715_0_VXSE53_010000.xml?x=1",
+	} {
+		if s.validLink(href) {
+			t.Errorf("%s should be rejected", href)
+		}
+	}
+}
+
+func TestGetLimitsResponseSize(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(make([]byte, maxBody+1))
+	}))
+	defer srv.Close()
+	s := &Source{client: srv.Client()}
+	if _, err := s.get(context.Background(), srv.URL+"/feed"); err == nil {
+		t.Error("an oversized response should fail")
 	}
 }

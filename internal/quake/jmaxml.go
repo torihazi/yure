@@ -3,11 +3,13 @@ package quake
 import (
 	"encoding/xml"
 	"fmt"
-	"math"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+
+	"github.com/torihazi/yure/internal/japanmap"
 )
 
 // report mirrors the parts of a JMA XML report (VXSE51/52/53) that yure uses.
@@ -91,19 +93,25 @@ func ParseReport(data []byte) (Quake, error) {
 	}
 	q.Time = q.Time.In(jst)
 
-	q.Place = r.Body.Earthquake.Hypocenter.Name
+	q.Place = printable(r.Body.Earthquake.Hypocenter.Name)
 	if c := r.Body.Earthquake.Hypocenter.Coordinate; c != "" {
 		if q.Lat, q.Lon, q.Depth, err = parseCoordinate(c); err != nil {
 			return Quake{}, err
 		}
 	}
 	// "NaN" when the magnitude couldn't be determined.
-	if m, err := strconv.ParseFloat(r.Body.Earthquake.Magnitude, 64); err == nil && !math.IsNaN(m) {
+	// The range check also rejects Inf and absurd values, which would make the ripple huge.
+	if m, err := strconv.ParseFloat(r.Body.Earthquake.Magnitude, 64); err == nil && m >= 0 && m <= 10 {
 		q.Magnitude = m
 	}
 
 	q.MaxScale = parseIntensity(r.Body.Intensity.MaxInt)
 	for _, p := range r.Body.Intensity.Prefs {
+		// Only known prefectures: the name ends up in notifications, and an unknown one
+		// couldn't be placed on the map anyway.
+		if _, ok := japanmap.Prefectures[p.Name]; !ok {
+			continue
+		}
 		if s := parseIntensity(p.MaxInt); s != ScaleUnknown {
 			q.PrefScales[p.Name] = s
 		}
@@ -116,7 +124,7 @@ func ParseReport(data []byte) (Quake, error) {
 // coordinate matches ISO 6709 as JMA writes it: "+28.0+139.9-470000/"
 // (latitude, longitude, then altitude in meters, so depth is negative).
 // The altitude is omitted when the depth is unknown.
-var coordinate = regexp.MustCompile(`^([+-][0-9.]+)([+-][0-9.]+)([+-][0-9]+)?/$`)
+var coordinate = regexp.MustCompile(`^([+-][0-9]+(?:\.[0-9]+)?)([+-][0-9]+(?:\.[0-9]+)?)([+-][0-9]+)?/$`)
 
 func parseCoordinate(s string) (lat, lon float64, depthKm int, err error) {
 	m := coordinate.FindStringSubmatch(s)
@@ -132,6 +140,17 @@ func parseCoordinate(s string) (lat, lon float64, depthKm int, err error) {
 		depthKm = -alt / 1000
 	}
 	return lat, lon, depthKm, nil
+}
+
+// printable drops control characters (including C1 controls like U+009B, which some
+// terminals treat as escape sequences) and line separators from text shown to the user.
+func printable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsGraphic(r) {
+			return r
+		}
+		return -1
+	}, s)
 }
 
 func parseIntensity(s string) Scale {

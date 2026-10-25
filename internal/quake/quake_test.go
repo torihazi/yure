@@ -147,3 +147,53 @@ func TestScaleString(t *testing.T) {
 		}
 	}
 }
+
+// hostileReport is a 震源・震度に関する情報 with the given fields, for testing how
+// ParseReport treats input that a tampered feed could carry.
+func hostileReport(place, coord, mag, pref string) []byte {
+	return []byte(`<Report>
+<Control><Title>震源・震度に関する情報</Title></Control>
+<Head><EventID>1</EventID><InfoType>発表</InfoType></Head>
+<Body>
+<Earthquake><OriginTime>2026-10-25T11:09:00+09:00</OriginTime>
+<Hypocenter><Area><Name>` + place + `</Name><Coordinate>` + coord + `</Coordinate></Area></Hypocenter>
+<Magnitude>` + mag + `</Magnitude></Earthquake>
+<Intensity><Observation><MaxInt>3</MaxInt>
+<Pref><Name>東京都</Name><MaxInt>3</MaxInt></Pref>
+<Pref><Name>` + pref + `</Name><MaxInt>3</MaxInt></Pref>
+</Observation></Intensity>
+</Body></Report>`)
+}
+
+func TestParseSanitizesText(t *testing.T) {
+	q, err := ParseReport(hostileReport("岩手県沖\u009b2J\n\"@\nStart-Process calc ", "+39.0+142.0-10000/", "5.0", "-h\n\"@"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q.Place != "岩手県沖2J\"@Start-Process calc" {
+		t.Errorf("Place should lose control characters and line breaks: %q", q.Place)
+	}
+	if len(q.PrefScales) != 1 || q.PrefScales["東京都"] != 30 {
+		t.Errorf("unknown prefectures should be dropped: %v", q.PrefScales)
+	}
+}
+
+func TestParseRejectsBogusMagnitude(t *testing.T) {
+	for _, mag := range []string{"Inf", "+Inf", "1e300", "11", "-1", "NaN"} {
+		q, err := ParseReport(hostileReport("岩手県沖", "+39.0+142.0-10000/", mag, "東京都"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if q.Magnitude != -1 {
+			t.Errorf("magnitude %q should be unknown, got %v", mag, q.Magnitude)
+		}
+	}
+}
+
+func TestParseCoordinateRejectsMalformedNumbers(t *testing.T) {
+	for _, s := range []string{"+1.2.3+139.9/", "+.+139.9/", "+28.+139.9/"} {
+		if _, _, _, err := parseCoordinate(s); err == nil {
+			t.Errorf("parseCoordinate(%q) should fail", s)
+		}
+	}
+}

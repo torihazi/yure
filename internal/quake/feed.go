@@ -9,7 +9,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -19,8 +21,10 @@ import (
 const (
 	feedRecent = "https://www.data.jma.go.jp/developer/xml/feed/eqvol.xml"
 	feedLong   = "https://www.data.jma.go.jp/developer/xml/feed/eqvol_l.xml"
+	dataPrefix = "https://www.data.jma.go.jp/developer/xml/data/" // where every report lives
 
 	pollInterval = time.Minute // the feed is cached for 60 seconds, so polling faster is pointless
+	maxBody      = 16 << 20    // the long-term feed is a few MB at most; reports are tens of KB
 	userAgent    = "yure (+https://github.com/torihazi/yure)"
 )
 
@@ -29,14 +33,20 @@ const (
 type Source struct {
 	client             *http.Client
 	recentURL, longURL string
+	dataPrefix         string // report links outside this are ignored
 	cacheDir           string // empty disables caching
 }
 
+// reportName matches report file names such as "20261025021715_0_VXSE53_010000.xml".
+// It is also the cache file name, so it must never contain a path separator or "..".
+var reportName = regexp.MustCompile(`^[0-9]{14}_[0-9]+_[A-Z0-9]+_[0-9]{6}\.xml$`)
+
 func NewSource() *Source {
 	s := &Source{
-		client:    &http.Client{Timeout: 20 * time.Second},
-		recentURL: feedRecent,
-		longURL:   feedLong,
+		client:     &http.Client{Timeout: 20 * time.Second},
+		recentURL:  feedRecent,
+		longURL:    feedLong,
+		dataPrefix: dataPrefix,
 	}
 	if dir, err := os.UserCacheDir(); err == nil {
 		s.cacheDir = filepath.Join(dir, "yure", "jmaxml")
@@ -70,13 +80,21 @@ func (s *Source) feed(ctx context.Context, url string) ([]entry, error) {
 	}
 	var out []entry
 	for _, e := range f.Entries {
-		if _, ok := kindByTitle[e.Title]; ok {
+		if _, ok := kindByTitle[e.Title]; ok && s.validLink(e.Link.Href) {
 			out = append(out, e)
 		}
 	}
 	// Reports must be merged in the order they were issued (速報 before 詳細).
 	slices.SortStableFunc(out, func(a, b entry) int { return a.Updated.Compare(b.Updated) })
 	return out, nil
+}
+
+// validLink reports whether href points at a report on JMA's server.
+// The feed comes from the network, so a link to anywhere else, or one whose name
+// would escape the cache directory, is not followed.
+func (s *Source) validLink(href string) bool {
+	name, ok := strings.CutPrefix(href, s.dataPrefix)
+	return ok && reportName.MatchString(name)
 }
 
 // report fetches and parses one report, using the disk cache when possible.
@@ -112,9 +130,14 @@ func (s *Source) get(ctx context.Context, url string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("気象庁 %s: %s", path.Base(url), resp.Status)
+		// StatusCode, not Status: the reason phrase is server-supplied text shown on screen.
+		return nil, fmt.Errorf("気象庁 %s: HTTP %d", path.Base(url), resp.StatusCode)
 	}
-	return io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
+	if err == nil && len(body) > maxBody {
+		return nil, fmt.Errorf("気象庁 %s: response too large", path.Base(url))
+	}
+	return body, err
 }
 
 // reports fetches the reports for entries concurrently and returns them in entry order.

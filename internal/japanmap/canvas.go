@@ -132,8 +132,14 @@ func (m *Map) Render(coastStyle lipgloss.Style, rings []Ring, marks []Mark) stri
 		cells[i] = cell{bits: b, style: &coastStyle}
 	}
 
+	// No real ripple comes near this. A bogus radius (say, from Inf) would otherwise
+	// make the loop below run practically forever.
+	maxRadius := 2 * math.Hypot(float64(m.cols*2), float64(m.rows*4))
 	for i := range rings {
 		r := &rings[i]
+		if !(r.Radius >= 0 && r.Radius <= maxRadius) { // also catches NaN
+			continue
+		}
 		layer := make([]uint8, len(m.coast))
 		cx, cy := m.project(r.Lon, r.Lat)
 		// Enough steps that neighboring points touch.

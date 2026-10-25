@@ -1,6 +1,6 @@
 module github.com/torihazi/yure
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/charmbracelet/bubbletea v1.3.10
@@ -33,6 +33,6 @@ require (
 	github.com/sergeymakinen/go-ico v1.0.0-beta.0 // indirect
 	github.com/tadvi/systray v0.0.0-20190226123456-11a2b8fa57af // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/sys v0.36.0 // indirect
+	golang.org/x/sys v0.44.0 // indirect
 	golang.org/x/text v0.3.8 // indirect
 )
