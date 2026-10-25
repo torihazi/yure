@@ -1,24 +1,24 @@
-// Package quake fetches earthquake reports from the P2P地震情報 API.
+// Package quake reads earthquake reports from the Japan Meteorological Agency (気象庁)
+// through its official XML feed (気象庁防災情報XML).
 //
-// API spec: https://www.p2pquake.net/develop/json_api_v2/
-// The data originates from the Japan Meteorological Agency (気象庁).
+// Feed and format: https://xml.kishou.go.jp/
 package quake
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 )
 
-// codeQuake is the API's code for 地震情報 (earthquake reports).
-// Other codes (tsunami, early warnings, user reports...) are ignored for now.
-const codeQuake = 551
-
-// Scale is the JMA seismic intensity (震度) as encoded by the API:
+// Scale is the JMA seismic intensity (震度):
 // 10 = 震度1, 20 = 震度2, ..., 45 = 5弱, 50 = 5強, 55 = 6弱, 60 = 6強, 70 = 7.
+// Spacing the values out keeps 5弱 < 5強 < 6弱 comparable with plain integers.
 type Scale int
 
-const ScaleUnknown Scale = -1
+const (
+	ScaleUnknown Scale = -1
+	// scaleAtLeast5 is "震度5弱以上と推定されるが、まだ観測値が届いていない".
+	scaleAtLeast5 Scale = 46
+)
 
 func (s Scale) String() string {
 	switch s {
@@ -30,7 +30,7 @@ func (s Scale) String() string {
 		return "3"
 	case 40:
 		return "4"
-	case 45, 46: // 46 = "5弱以上と推定されるが震度情報を入手していない"
+	case 45, scaleAtLeast5:
 		return "5-"
 	case 50:
 		return "5+"
@@ -48,7 +48,7 @@ func (s Scale) String() string {
 // Japanese returns the name used in Japanese, e.g. "震度5弱".
 func (s Scale) Japanese() string {
 	switch s {
-	case 45, 46:
+	case 45, scaleAtLeast5:
 		return "震度5弱"
 	case 50:
 		return "震度5強"
@@ -63,92 +63,8 @@ func (s Scale) Japanese() string {
 	}
 }
 
-// Quake is one earthquake report.
-type Quake struct {
-	ID         string
-	Type       string // ScalePrompt, Destination, DetailScale, ...
-	Time       time.Time
-	Place      string  // name of the hypocenter area, e.g. 能登半島沖
-	Lat, Lon   float64 // hypocenter; HasCenter reports whether they are valid
-	Depth      int     // km; 0 means very shallow (ごく浅い)
-	Magnitude  float64 // -1 if unknown
-	MaxScale   Scale
-	Tsunami    string
-	PrefScales map[string]Scale // strongest intensity per prefecture
-}
-
-// HasCenter reports whether the hypocenter is known.
-// 震度速報 (ScalePrompt) is issued before the hypocenter is determined.
-func (q Quake) HasCenter() bool {
-	return q.Lat > -200 && q.Lon > -200
-}
-
-// apiQuake mirrors the JSON shape of the API.
-type apiQuake struct {
-	ID    string `json:"id"`
-	Code  int    `json:"code"`
-	Issue struct {
-		Type string `json:"type"`
-	} `json:"issue"`
-	Earthquake struct {
-		Time       string `json:"time"`
-		Hypocenter struct {
-			Name      string  `json:"name"`
-			Latitude  float64 `json:"latitude"`
-			Longitude float64 `json:"longitude"`
-			Depth     int     `json:"depth"`
-			Magnitude float64 `json:"magnitude"`
-		} `json:"hypocenter"`
-		MaxScale        int    `json:"maxScale"`
-		DomesticTsunami string `json:"domesticTsunami"`
-	} `json:"earthquake"`
-	Points []struct {
-		Pref  string `json:"pref"`
-		Scale int    `json:"scale"`
-	} `json:"points"`
-}
-
-// jst is fixed rather than loaded from tzdata so the binary works anywhere.
-var jst = time.FixedZone("JST", 9*60*60)
-
-func (a apiQuake) toQuake() Quake {
-	h := a.Earthquake.Hypocenter
-	q := Quake{
-		ID:         a.ID,
-		Type:       a.Issue.Type,
-		Place:      h.Name,
-		Lat:        h.Latitude,
-		Lon:        h.Longitude,
-		Depth:      h.Depth,
-		Magnitude:  h.Magnitude,
-		MaxScale:   Scale(a.Earthquake.MaxScale),
-		Tsunami:    a.Earthquake.DomesticTsunami,
-		PrefScales: make(map[string]Scale),
-	}
-	// A bad timestamp leaves Time zero; the rest of the report is still useful.
-	q.Time, _ = time.ParseInLocation("2006/01/02 15:04:05", a.Earthquake.Time, jst)
-	for _, p := range a.Points {
-		if s := Scale(p.Scale); s > q.PrefScales[p.Pref] {
-			q.PrefScales[p.Pref] = s
-		}
-	}
-	return q
-}
-
-// decode parses one API object. ok is false for non-earthquake messages.
-func decode(data []byte) (q Quake, ok bool, err error) {
-	var a apiQuake
-	if err := json.Unmarshal(data, &a); err != nil {
-		return Quake{}, false, err
-	}
-	if a.Code != codeQuake {
-		return Quake{}, false, nil
-	}
-	return a.toQuake(), true, nil
-}
-
-// ParseScale parses an intensity written as on the command line: 1, 2, 3, 4, 5-, 5+, 6-, 6+, 7.
-// "5弱" style is accepted too.
+// ParseScale parses an intensity as written in JMA XML and on the command line:
+// 1, 2, 3, 4, 5-, 5+, 6-, 6+, 7. "5弱" style is accepted too.
 func ParseScale(s string) (Scale, error) {
 	switch s {
 	case "1":
@@ -172,3 +88,46 @@ func ParseScale(s string) (Scale, error) {
 	}
 	return 0, fmt.Errorf("unknown intensity %q (use 1, 2, 3, 4, 5-, 5+, 6-, 6+ or 7)", s)
 }
+
+// Kinds of report. JMA issues them in this order for one earthquake.
+const (
+	KindScalePrompt = "ScalePrompt" // 震度速報: intensity only, ~1.5 minutes after
+	KindDestination = "Destination" // 震源に関する情報: hypocenter only
+	KindDetail      = "DetailScale" // 震源・震度に関する情報: both, in detail
+)
+
+// Tsunami outlook in Japan, as stated in the report's fixed comments.
+const (
+	TsunamiNone         = "None"         // 津波の心配なし
+	TsunamiNonEffective = "NonEffective" // 若干の海面変動 (no damage expected)
+	TsunamiWarning      = "Warning"      // 津波警報・注意報などを発表中
+	TsunamiChecking     = "Checking"     // 今後の情報に注意
+	TsunamiUnknown      = ""
+)
+
+// noCoord is used for Lat and Lon when the hypocenter isn't known yet.
+const noCoord = -200
+
+// Quake is one earthquake, built from one or more reports.
+type Quake struct {
+	ID         string // JMA's EventID, shared by all reports about the same quake
+	Kind       string // kind of the latest report merged in
+	Canceled   bool   // the report retracts an earlier one (取消)
+	Time       time.Time
+	Place      string  // name of the hypocenter area, e.g. 能登半島沖
+	Lat, Lon   float64 // hypocenter; see HasCenter
+	Depth      int     // km; 0 means very shallow (ごく浅い), -1 unknown
+	Magnitude  float64 // -1 if unknown
+	MaxScale   Scale
+	Tsunami    string
+	PrefScales map[string]Scale // strongest intensity per prefecture
+}
+
+// HasCenter reports whether the hypocenter is known.
+// 震度速報 is issued before the hypocenter is determined.
+func (q Quake) HasCenter() bool {
+	return q.Lat > noCoord && q.Lon > noCoord
+}
+
+// jst is fixed rather than loaded from tzdata so the binary works anywhere.
+var jst = time.FixedZone("JST", 9*60*60)

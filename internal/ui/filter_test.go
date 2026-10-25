@@ -22,8 +22,8 @@ func TestFilterApply(t *testing.T) {
 	}{
 		{filter{period: 0}, 2},              // 24h, any intensity
 		{filter{period: 1}, 3},              // 7 days
-		{filter{period: 2}, 4},              // 30 days
-		{filter{period: 2, minScale: 2}, 3}, // 30 days, 3以上
+		{filter{period: 1, minScale: 1}, 2}, // 7 days, 2以上
+		{filter{period: 1, minScale: 2}, 2}, // 7 days, 3以上
 		{filter{period: 0, minScale: 3}, 0}, // 24h, 4以上
 	}
 	for _, tt := range tests {
@@ -46,5 +46,12 @@ func TestRefilterKeepsSelection(t *testing.T) {
 	m.refilter()
 	if len(m.visible) != 1 || m.sel != 0 || m.visible[m.sel].MaxScale != 30 {
 		t.Errorf("selection should follow the 震度3 quake: sel=%d visible=%v", m.sel, m.visible)
+	}
+}
+
+// JMA's long-term feed keeps about a week, so a longer period would silently show partial data.
+func TestPeriodsFitTheFeed(t *testing.T) {
+	if longest := periods[len(periods)-1].span; longest > 7*24*time.Hour {
+		t.Errorf("longest period %v exceeds what the feed provides", longest)
 	}
 }

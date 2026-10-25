@@ -20,6 +20,7 @@ const (
 	rippleLength = 3 * time.Second
 	frameRate    = 80 * time.Millisecond
 	demoInterval = 4 * time.Second
+	demoReports  = 20
 )
 
 // Options are set from command-line flags.
@@ -33,18 +34,16 @@ type Options struct {
 
 type model struct {
 	opts     Options
-	ep       quake.Endpoints
+	src      *quake.Source
 	events   chan quake.Event
-	notified map[time.Time]bool // origin times already notified, so each quake notifies once
+	notified map[string]bool // IDs already notified, so each quake notifies once
 
 	all     []quake.Quake // everything received, newest first
 	visible []quake.Quake // all, after the filter
 	sel     int           // index into visible
 	filter  filter
 
-	fetchedSince time.Time // all is complete back to this time
-	loading      bool
-	truncated    bool // the last search hit the API's page limit
+	loading bool // the initial history is still being fetched
 
 	width, height int
 	worldMap      *japanmap.Map
@@ -57,11 +56,9 @@ type model struct {
 
 // Messages. Bubble Tea delivers these to Update.
 type (
-	searchMsg struct {
-		since     time.Time
-		quakes    []quake.Quake
-		truncated bool
-		err       error
+	loadedMsg struct {
+		quakes []quake.Quake
+		err    error
 	}
 	eventMsg quake.Event
 	frameMsg struct{}
@@ -74,17 +71,19 @@ func Run(opts Options) error {
 
 	m := model{
 		opts:     opts,
-		ep:       quake.Production,
+		src:      quake.NewSource(),
 		events:   make(chan quake.Event),
-		notified: make(map[time.Time]bool),
+		notified: make(map[string]bool),
 		status:   "connecting...",
 		filter:   filter{period: defaultPeriod},
+		loading:  !opts.Demo,
 	}
-	// The source runs in its own goroutine and hands events to the UI through the channel.
+	// The feed is watched in its own goroutine, which hands events to the UI through the channel.
 	if opts.Demo {
-		go quake.Replay(ctx, m.ep, demoInterval, m.events)
+		go m.src.Replay(ctx, demoReports, demoInterval, m.events)
 	} else {
-		go quake.Stream(ctx, m.ep, m.events)
+		// Reports issued from now on come from Watch; earlier ones from Load in Init.
+		go m.src.Watch(ctx, time.Now(), m.events)
 	}
 
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
@@ -96,15 +95,16 @@ func (m model) Init() tea.Cmd {
 		// The replay itself delivers the history, one report at a time.
 		return waitForEvent(m.events)
 	}
-	return tea.Batch(search(m.ep, m.filter.since(time.Now())), waitForEvent(m.events))
+	return tea.Batch(load(m.src), waitForEvent(m.events))
 }
 
-func search(ep quake.Endpoints, since time.Time) tea.Cmd {
+// load fetches the longest period up front, so switching periods only filters.
+func load(src *quake.Source) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		qs, truncated, err := quake.Since(ctx, ep, since)
-		return searchMsg{since, qs, truncated, err}
+		qs, err := src.Load(ctx, time.Now().Add(-periods[len(periods)-1].span))
+		return loadedMsg{qs, err}
 	}
 }
 
@@ -144,29 +144,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "p":
 			m.filter.period = (m.filter.period + 1) % len(periods)
 			m.refilter()
-			return m, m.fetchIfNeeded()
 		case "s":
 			m.filter.minScale = (m.filter.minScale + 1) % len(minScales)
 			m.refilter()
 		}
 
-	case searchMsg:
+	case loadedMsg:
 		m.loading = false
 		if msg.err != nil {
 			m.err = msg.err
 			return m, nil
 		}
-		m.err = nil
-		first := m.fetchedSince.IsZero()
 		for _, q := range msg.quakes {
 			m.all = quake.Merge(m.all, q)
 		}
-		// Even when truncated, don't fetch the same range again; the panel says it's partial.
-		m.fetchedSince, m.truncated = msg.since, msg.truncated
 		m.refilter()
-		if first {
-			return m.startRipple()
-		}
+		return m.startRipple()
 
 	case eventMsg:
 		next := waitForEvent(m.events)
@@ -174,19 +167,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.Err != nil && m.opts.Demo:
 			m.err = msg.Err // the replay doesn't retry
 		case msg.Err != nil:
-			m.status = "reconnecting..."
-		case msg.Connected && m.opts.Demo:
+			m.status = "feed error, retrying"
+		case msg.OK && m.opts.Demo:
 			m.status = "demo"
-		case msg.Connected:
+		case msg.OK:
 			m.status = "live"
 		case msg.Quake != nil:
 			m.all = quake.Merge(m.all, *msg.Quake)
-			merged := m.all[indexOf(m.all, msg.Quake.Time)]
-			notifyCmd := m.maybeNotify(merged) // independent of the filter
 			m.refilter()
+			i := indexOf(m.all, msg.Quake.ID)
+			if i < 0 {
+				return m, next // a cancellation removed it
+			}
+			notifyCmd := m.maybeNotify(m.all[i]) // independent of the filter
 			// Jump to the quake so it's impossible to miss, unless the filter hides it.
 			// It's usually at the top, but a late report can update an older entry.
-			if i := indexOf(m.visible, msg.Quake.Time); i >= 0 {
+			if i := indexOf(m.visible, msg.Quake.ID); i >= 0 {
 				m.sel = i
 				var ripple tea.Cmd
 				m, ripple = m.startRipple()
@@ -205,10 +201,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// indexOf returns the index of the quake with origin time t, or -1.
-func indexOf(quakes []quake.Quake, t time.Time) int {
+// indexOf returns the index of the quake with the given ID, or -1.
+func indexOf(quakes []quake.Quake, id string) int {
 	for i, q := range quakes {
-		if q.Time.Equal(t) {
+		if q.ID == id {
 			return i
 		}
 	}
@@ -217,32 +213,21 @@ func indexOf(quakes []quake.Quake, t time.Time) int {
 
 // refilter recomputes visible, keeping the selected quake selected if it's still shown.
 func (m *model) refilter() {
-	var selected time.Time
+	var selected string
 	if m.sel < len(m.visible) {
-		selected = m.visible[m.sel].Time
+		selected = m.visible[m.sel].ID
 	}
 	m.visible = m.filter.apply(m.all, time.Now())
 	m.sel = max(0, indexOf(m.visible, selected))
 }
 
-// fetchIfNeeded fetches older quakes when the period grows beyond what we have.
-// Shrinking the period only filters, so flipping through periods doesn't hit the API's rate limit.
-func (m *model) fetchIfNeeded() tea.Cmd {
-	since := m.filter.since(time.Now())
-	if m.opts.Demo || m.loading || (!m.fetchedSince.IsZero() && !since.Before(m.fetchedSince)) {
-		return nil
-	}
-	m.loading = true
-	return search(m.ep, since)
-}
-
 // maybeNotify returns a command that shows a notification if q is strong enough
 // and hasn't been notified yet. Notifying runs outside Update so it can't freeze the UI.
 func (m model) maybeNotify(q quake.Quake) tea.Cmd {
-	if m.opts.NotifyMin == 0 || q.MaxScale < m.opts.NotifyMin || m.notified[q.Time] {
+	if m.opts.NotifyMin == 0 || q.MaxScale < m.opts.NotifyMin || m.notified[q.ID] {
 		return nil
 	}
-	m.notified[q.Time] = true
+	m.notified[q.ID] = true
 	demo := m.opts.Demo
 	return func() tea.Msg {
 		// A failed notification shouldn't interrupt watching the map.
@@ -357,8 +342,6 @@ func (m model) viewPanel() string {
 	header := fmt.Sprintf("%s · %d件", m.filter.label(), len(m.visible))
 	if m.loading {
 		header += " (読み込み中)"
-	} else if m.truncated {
-		header += " (新しい300件まで)"
 	}
 	header = dimStyle.Render(header) + "\n\n"
 
@@ -402,12 +385,12 @@ func (m model) viewPanel() string {
 func (m model) viewFooter() string {
 	status := m.status
 	if m.opts.Demo {
-		status += " (replaying recent quakes)"
+		status += " (replaying recent reports)"
 	}
 	if m.opts.NotifyMin > 0 {
 		status += " · notify ≥ " + m.opts.NotifyMin.Japanese()
 	}
-	return dimStyle.Render(fmt.Sprintf(" %s · ↑↓ select · enter replay · p period · s intensity · q quit · data: P2P地震情報 / 気象庁", status))
+	return dimStyle.Render(fmt.Sprintf(" %s · ↑↓ select · enter replay · p period · s intensity · q quit · data: 気象庁防災情報XML", status))
 }
 
 func placeName(q quake.Quake) string {

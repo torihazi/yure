@@ -8,7 +8,8 @@ import (
 
 // Periods and minimum intensities that the p and s keys cycle through.
 // Based on real data: Japan has ~5-7 felt quakes a day, about 70% of them 震度1,
-// so 7 days is ~30 quakes and 30 days is ~170.
+// so 7 days is ~30 quakes. JMA's long-term feed only goes back about a week,
+// so that's the longest period. The last period is what's loaded at startup.
 var (
 	periods = []struct {
 		label string
@@ -16,7 +17,6 @@ var (
 	}{
 		{"24時間", 24 * time.Hour},
 		{"7日", 7 * 24 * time.Hour},
-		{"30日", 30 * 24 * time.Hour},
 	}
 	minScales = []quake.Scale{0, 20, 30, 40, 45}
 )
