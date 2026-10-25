@@ -3,16 +3,13 @@ version: 2
 builds:
   - env:
       - CGO_ENABLED=0
-    goos: [darwin, linux, windows]
+    goos: [darwin, linux]
     goarch: [amd64, arm64]
     ldflags:
       - -s -w -X main.version={{.Tag}}
 
 archives:
   - formats: [tar.gz]
-    format_overrides:
-      - goos: windows
-        formats: [zip]
     files:
       - LICENSE
       - README.md

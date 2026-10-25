@@ -1,4 +1,4 @@
-// yure shows earthquakes in Japan on a map in your terminal, live.
+// yure shows recent earthquakes in Japan on a map in your terminal, updated every minute.
 package main
 
 import (

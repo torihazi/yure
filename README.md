@@ -1,8 +1,8 @@
 # yure
 
-ターミナルで、日本の地震をリアルタイムに地図で見る TUI です。
+ターミナルで、日本で起きた地震を地図で見る TUI です。気象庁の情報を1分ごとに取得して表示します。
 
-*A terminal UI that shows earthquakes in Japan on a live map.*
+*A terminal UI that shows recent earthquakes in Japan on a map, updated every minute.*
 
 ![yure --demo の画面: 地震が届くたびに震源から波紋が広がる](docs/demo.gif)
 
@@ -25,34 +25,16 @@ macOS / Linux:
 curl -fsSL https://raw.githubusercontent.com/torihazi/yure/main/install.sh | sh
 ```
 
-最新のリリースをダウンロードし、チェックサムを確かめてから `~/.local/bin/yure` に置きます。置き場所は `YURE_INSTALL_DIR` で変えられます。実行前に中身を確かめたい場合は [install.sh](install.sh) を読んでください。
+最新のリリースをダウンロードし、チェックサムを確かめてから `~/.local/bin/yure` に置きます。置き場所は `YURE_INSTALL_DIR` で変えられます。
 
-### 手動でダウンロード
+スクリプトを使いたくない場合は、[Releases](https://github.com/torihazi/yure/releases) からダウンロードして展開してください(macOS で「開けません」と出たら `xattr -d com.apple.quarantine ./yure`)。
 
-[Releases](https://github.com/torihazi/yure/releases) から、OS に合ったファイルをダウンロードして展開してください(Windows はこちら)。
-
-macOS では、ブラウザでダウンロードしたバイナリは署名がないため「開けません」と表示されます。次のコマンドで解除できます。
-
-```sh
-xattr -d com.apple.quarantine ./yure
-```
-
-### Go でインストール
-
-Go 1.25 以上が必要です。
-
-```sh
-go install github.com/torihazi/yure@latest
-```
-
-### 動作環境
-
-macOS で動作を確認しています。Linux と Windows はビルドできることのみ確認しており、動作は保証できません(不具合があれば Issue で教えてください)。
+macOS で動作を確認しています。Linux はビルドとインストールのみ確認しており、動作は保証できません(不具合があれば Issue で教えてください)。
 
 ## 使い方
 
 ```sh
-yure                 # リアルタイム表示(震度3以上で通知)
+yure                 # 最新の地震を表示する(震度3以上で通知)
 yure --demo          # 直近の実際の地震を数秒おきに再生する
 yure --notify 4      # 震度4以上で通知する
 yure --notify off    # 通知しない

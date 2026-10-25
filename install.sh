@@ -19,7 +19,7 @@ fail() {
 case "$(uname -s)" in
 Darwin) os=darwin ;;
 Linux) os=linux ;;
-*) fail "unsupported OS: $(uname -s) (on Windows, download the zip from https://github.com/$repo/releases)" ;;
+*) fail "unsupported OS: $(uname -s) (yure supports macOS and Linux)" ;;
 esac
 case "$(uname -m)" in
 x86_64 | amd64) arch=amd64 ;;
