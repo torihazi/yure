@@ -53,7 +53,9 @@ if command -v sha256sum >/dev/null 2>&1; then
 else
 	got=$(shasum -a 256 "$tmp/$archive" | awk '{ print $1 }')
 fi
-[ -n "$want" ] && [ "$want" = "$got" ] || fail "checksum mismatch for $archive"
+if [ -z "$want" ] || [ "$want" != "$got" ]; then
+	fail "checksum mismatch for $archive"
+fi
 
 tar -xzf "$tmp/$archive" -C "$tmp" yure
 mkdir -p "$dir"
