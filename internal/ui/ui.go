@@ -11,7 +11,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/torihazi/yure/internal/japanmap"
-	"github.com/torihazi/yure/internal/notify"
 	"github.com/torihazi/yure/internal/quake"
 )
 
@@ -27,16 +26,12 @@ const (
 type Options struct {
 	// Demo replays recent real reports instead of waiting for new ones.
 	Demo bool
-	// NotifyMin is the weakest intensity that triggers a desktop notification.
-	// Zero disables notifications.
-	NotifyMin quake.Scale
 }
 
 type model struct {
-	opts     Options
-	src      *quake.Source
-	events   chan quake.Event
-	notified map[string]bool // IDs already notified, so each quake notifies once
+	opts   Options
+	src    *quake.Source
+	events chan quake.Event
 
 	all     []quake.Quake // everything received, newest first
 	visible []quake.Quake // all, after the filter
@@ -70,13 +65,12 @@ func Run(opts Options) error {
 	defer cancel()
 
 	m := model{
-		opts:     opts,
-		src:      quake.NewSource(),
-		events:   make(chan quake.Event),
-		notified: make(map[string]bool),
-		status:   "connecting...",
-		filter:   filter{period: defaultPeriod},
-		loading:  !opts.Demo,
+		opts:    opts,
+		src:     quake.NewSource(),
+		events:  make(chan quake.Event),
+		status:  "connecting...",
+		filter:  filter{period: defaultPeriod},
+		loading: !opts.Demo,
 	}
 	// The feed is watched in its own goroutine, which hands events to the UI through the channel.
 	if opts.Demo {
@@ -179,16 +173,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if i < 0 {
 				return m, next // a cancellation removed it
 			}
-			notifyCmd := m.maybeNotify(m.all[i]) // independent of the filter
 			// Jump to the quake so it's impossible to miss, unless the filter hides it.
 			// It's usually at the top, but a late report can update an older entry.
 			if i := indexOf(m.visible, msg.Quake.ID); i >= 0 {
 				m.sel = i
 				var ripple tea.Cmd
 				m, ripple = m.startRipple()
-				return m, tea.Batch(next, ripple, notifyCmd)
+				return m, tea.Batch(next, ripple)
 			}
-			return m, tea.Batch(next, notifyCmd)
+			return m, next
 		}
 		return m, next
 
@@ -219,21 +212,6 @@ func (m *model) refilter() {
 	}
 	m.visible = m.filter.apply(m.all, time.Now())
 	m.sel = max(0, indexOf(m.visible, selected))
-}
-
-// maybeNotify returns a command that shows a notification if q is strong enough
-// and hasn't been notified yet. Notifying runs outside Update so it can't freeze the UI.
-func (m model) maybeNotify(q quake.Quake) tea.Cmd {
-	if m.opts.NotifyMin == 0 || q.MaxScale < m.opts.NotifyMin || m.notified[q.ID] {
-		return nil
-	}
-	m.notified[q.ID] = true
-	demo := m.opts.Demo
-	return func() tea.Msg {
-		// A failed notification shouldn't interrupt watching the map.
-		_ = notify.Quake(q, demo)
-		return nil
-	}
 }
 
 // startRipple restarts the ripple, scheduling frames only if none are pending.
@@ -386,9 +364,6 @@ func (m model) viewFooter() string {
 	status := m.status
 	if m.opts.Demo {
 		status += " (replaying recent reports)"
-	}
-	if m.opts.NotifyMin > 0 {
-		status += " · notify ≥ " + m.opts.NotifyMin.Japanese()
 	}
 	return dimStyle.Render(fmt.Sprintf(" %s · ↑↓ select · enter replay · p period · s intensity · q quit · data: 気象庁防災情報XML", status))
 }

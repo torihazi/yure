@@ -107,8 +107,8 @@ func ParseReport(data []byte) (Quake, error) {
 
 	q.MaxScale = parseIntensity(r.Body.Intensity.MaxInt)
 	for _, p := range r.Body.Intensity.Prefs {
-		// Only known prefectures: the name ends up in notifications, and an unknown one
-		// couldn't be placed on the map anyway.
+		// Only known prefectures: an unknown one couldn't be placed on the map anyway,
+		// and this keeps arbitrary feed text out of the UI.
 		if _, ok := japanmap.Prefectures[p.Name]; !ok {
 			continue
 		}

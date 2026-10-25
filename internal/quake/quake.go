@@ -63,7 +63,7 @@ func (s Scale) Japanese() string {
 	}
 }
 
-// ParseScale parses an intensity as written in JMA XML and on the command line:
+// ParseScale parses an intensity as written in JMA XML:
 // 1, 2, 3, 4, 5-, 5+, 6-, 6+, 7. "5弱" style is accepted too.
 func ParseScale(s string) (Scale, error) {
 	switch s {
